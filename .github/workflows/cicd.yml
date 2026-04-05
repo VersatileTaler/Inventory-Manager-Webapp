@@ -30,7 +30,7 @@ jobs:
       - name: Run tests
         run: pytest test_app.py -v
 
-      - name: Verify metrics endpoint exists
+      - name: Verify metrics endpoint
         run: |
           python -c "
           from app import app
@@ -53,7 +53,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install Python yaml parser
+      - name: Install pyyaml
         run: pip install pyyaml
 
       - name: Validate Prometheus config
@@ -79,8 +79,17 @@ jobs:
 
       - name: Validate Docker Compose file
         run: |
-          pip install docker-compose
-          docker-compose config
+          python -c "
+          import yaml
+          with open('docker-compose.yml') as f:
+              config = yaml.safe_load(f)
+          assert 'services' in config
+          assert 'flask-app' in config['services']
+          assert 'prometheus' in config['services']
+          assert 'grafana' in config['services']
+          print('Docker Compose valid!')
+          print('Services found:', list(config['services'].keys()))
+          "
 
   # ─────────────────────────────
   # JOB 3: Build & Push Image
@@ -152,7 +161,7 @@ jobs:
           curl -f http://localhost:9090/-/healthy
           echo "Prometheus is healthy!"
 
-      - name: Verify Prometheus is scraping Flask
+      - name: Verify Prometheus scraping Flask
         run: |
           sleep 20
           curl -f "http://localhost:9090/api/v1/targets" | \
@@ -160,9 +169,10 @@ jobs:
           import sys, json
           data = json.load(sys.stdin)
           targets = data['data']['activeTargets']
-          flask_target = [t for t in targets if 'flask' in t['labels'].get('job','')]
+          flask_target = [t for t in targets
+                          if 'flask' in t['labels'].get('job','')]
           assert len(flask_target) > 0, 'Flask target not found!'
-          assert flask_target[0]['health'] == 'up', 'Flask target not healthy!'
+          assert flask_target[0]['health'] == 'up', 'Flask not healthy!'
           print('Prometheus scraping Flask successfully!')
           "
 
@@ -184,7 +194,7 @@ jobs:
           echo "$METRICS" | grep "inventory_total_items"
           echo "Metrics updated correctly!"
 
-      - name: Show all service logs
+      - name: Show logs on failure
         if: failure()
         run: docker-compose logs
 
