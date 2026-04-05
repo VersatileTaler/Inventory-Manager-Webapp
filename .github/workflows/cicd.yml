@@ -1,0 +1,193 @@
+name: Inventory Monitor CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+
+  # ─────────────────────────────
+  # JOB 1: Run Tests
+  # ─────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest test_app.py -v
+
+      - name: Verify metrics endpoint exists
+        run: |
+          python -c "
+          from app import app
+          client = app.test_client()
+          r = client.get('/metrics')
+          assert r.status_code == 200
+          assert b'inventory_request_count_total' in r.data
+          print('Metrics endpoint verified!')
+          "
+
+  # ─────────────────────────────
+  # JOB 2: Validate Configs
+  # ─────────────────────────────
+  validate-configs:
+    name: Validate Config Files
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Python yaml parser
+        run: pip install pyyaml
+
+      - name: Validate Prometheus config
+        run: |
+          python -c "
+          import yaml
+          with open('prometheus/prometheus.yml') as f:
+              config = yaml.safe_load(f)
+          assert 'scrape_configs' in config
+          assert len(config['scrape_configs']) > 0
+          print('Prometheus config valid!')
+          "
+
+      - name: Validate Grafana datasource config
+        run: |
+          python -c "
+          import yaml
+          with open('grafana/provisioning/datasources/datasource.yml') as f:
+              config = yaml.safe_load(f)
+          assert 'datasources' in config
+          print('Grafana datasource config valid!')
+          "
+
+      - name: Validate Docker Compose file
+        run: |
+          pip install docker-compose
+          docker-compose config
+
+  # ─────────────────────────────
+  # JOB 3: Build & Push Image
+  # ─────────────────────────────
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: validate-configs
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:latest \
+            -t ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:${{ github.sha }} .
+
+      - name: Push to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:${{ github.sha }}
+
+  # ─────────────────────────────
+  # JOB 4: Deploy & Verify
+  # ─────────────────────────────
+  deploy-and-verify:
+    name: Deploy and Verify All Services
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Update image in compose file
+        run: |
+          sed -i 's|build: \.|image: ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:${{ github.sha }}|g' \
+          docker-compose.yml
+
+      - name: Start all services
+        run: |
+          docker-compose up -d
+          echo "Waiting for services to start..."
+          sleep 30
+
+      - name: Check all containers running
+        run: docker-compose ps
+
+      - name: Verify Flask app health
+        run: |
+          curl -f http://localhost:5000/health
+          echo "Flask app is healthy!"
+
+      - name: Verify Flask metrics endpoint
+        run: |
+          curl -f http://localhost:5000/metrics
+          echo "Metrics endpoint is working!"
+
+      - name: Verify Prometheus is running
+        run: |
+          curl -f http://localhost:9090/-/healthy
+          echo "Prometheus is healthy!"
+
+      - name: Verify Prometheus is scraping Flask
+        run: |
+          sleep 20
+          curl -f "http://localhost:9090/api/v1/targets" | \
+          python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          targets = data['data']['activeTargets']
+          flask_target = [t for t in targets if 'flask' in t['labels'].get('job','')]
+          assert len(flask_target) > 0, 'Flask target not found!'
+          assert flask_target[0]['health'] == 'up', 'Flask target not healthy!'
+          print('Prometheus scraping Flask successfully!')
+          "
+
+      - name: Verify Grafana is running
+        run: |
+          curl -f http://localhost:3000/api/health
+          echo "Grafana is healthy!"
+
+      - name: Add test inventory item
+        run: |
+          curl -X POST http://localhost:5000/add \
+            -d "name=TestItem&quantity=10&price=9.99"
+          echo "Test item added!"
+
+      - name: Verify metrics updated
+        run: |
+          sleep 5
+          METRICS=$(curl -s http://localhost:5000/metrics)
+          echo "$METRICS" | grep "inventory_total_items"
+          echo "Metrics updated correctly!"
+
+      - name: Show all service logs
+        if: failure()
+        run: docker-compose logs
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose down

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Inventory Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-family: Arial, sans-serif;
+      padding: 30px 20px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: #89b4fa; margin-bottom: 6px; font-size: 1.8rem; }
+    .subtitle { color: #6c7086; margin-bottom: 24px; font-size: 0.9rem; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #313244;
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #cba6f7;
+    }
+    .stat-label {
+      font-size: 0.85rem;
+      color: #6c7086;
+      margin-top: 4px;
+    }
+    .card {
+      background: #313244;
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      color: #89b4fa;
+      margin-bottom: 16px;
+    }
+    .form-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    input[type=text], input[type=number] {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #45475a;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-size: 0.95rem;
+      min-width: 120px;
+    }
+    .btn {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
+    .btn-primary  { background: #89b4fa; color: #1e1e2e; }
+    .btn-success  { background: #a6e3a1; color: #1e1e2e; }
+    .btn-danger   { background: #f38ba8; color: #1e1e2e; padding: 6px 12px; font-size: 0.82rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #1e1e2e;
+      color: #89b4fa;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #45475a;
+      font-size: 0.9rem;
+      vertical-align: middle;
+    }
+    tr:hover td { background: #1e1e2e; }
+    .qty-form { display: flex; gap: 6px; align-items: center; }
+    .qty-input {
+      width: 70px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid #45475a;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-size: 0.85rem;
+    }
+    .empty { text-align: center; color: #6c7086; padding: 24px; font-style: italic; }
+    .monitor-link {
+      background: #313244;
+      border-radius: 10px;
+      padding: 14px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .monitor-link span { color: #6c7086; font-size: 0.88rem; }
+    .monitor-link a {
+      color: #89b4fa;
+      text-decoration: none;
+      font-size: 0.88rem;
+      background: #1e1e2e;
+      padding: 5px 12px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📦 Inventory Tracker</h1>
+  <p class="subtitle">Monitored by Prometheus + Grafana</p>
+
+  <!-- Monitoring Links -->
+  <div class="monitor-link">
+    <span>Monitoring:</span>
+    <a href="http://localhost:9090" target="_blank">Prometheus</a>
+    <a href="http://localhost:3000" target="_blank">Grafana</a>
+    <a href="/metrics" target="_blank">Raw Metrics</a>
+    <a href="/health" target="_blank">Health Check</a>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-value">{{ inventory|length }}</div>
+      <div class="stat-label">Total Items</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">
+        {{ inventory.values()|sum(attribute='quantity') }}
+      </div>
+      <div class="stat-label">Total Units</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">${{ "%.2f"|format(total_value) }}</div>
+      <div class="stat-label">Total Value</div>
+    </div>
+  </div>
+
+  <!-- Add Item Form -->
+  <div class="card">
+    <h2>Add New Item</h2>
+    <form action="/add" method="POST">
+      <div class="form-row">
+        <input type="text"   name="name"     placeholder="Item name"  required />
+        <input type="number" name="quantity" placeholder="Quantity"   min="0" required />
+        <input type="number" name="price"    placeholder="Price ($)"  min="0" step="0.01" required />
+        <button type="submit" class="btn btn-primary">Add Item</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Inventory Table -->
+  <div class="card">
+    <h2>Inventory Items</h2>
+    {% if inventory %}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Item Name</th>
+          <th>Quantity</th>
+          <th>Price</th>
+          <th>Total Value</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for id, item in inventory.items() %}
+        <tr>
+          <td>#{{ id }}</td>
+          <td>{{ item.name }}</td>
+          <td>
+            <form action="/update/{{ id }}" method="POST" class="qty-form">
+              <input type="number" name="quantity"
+                     value="{{ item.quantity }}"
+                     class="qty-input" min="0" />
+              <button type="submit" class="btn btn-success">Update</button>
+            </form>
+          </td>
+          <td>${{ "%.2f"|format(item.price) }}</td>
+          <td>${{ "%.2f"|format(item.quantity * item.price) }}</td>
+          <td>
+            <a href="/delete/{{ id }}">
+              <button class="btn btn-danger">Delete</button>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No items yet. Add your first item above!</p>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>
