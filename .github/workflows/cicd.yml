@@ -132,19 +132,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Verify Docker Compose V2 available
+        run: |
+          docker compose version
+          echo "Docker Compose V2 ready!"
+
       - name: Update image in compose file
         run: |
           sed -i 's|build: \.|image: ${{ secrets.DOCKER_USERNAME }}/flask-inventory-monitor:${{ github.sha }}|g' \
           docker-compose.yml
 
+      - name: Build images
+        run: docker compose build
+
       - name: Start all services
         run: |
-          docker-compose up -d --build
-          echo "Waiting for services to start..."
+          docker compose up -d
+          echo "Waiting for all services to start..."
           sleep 30
 
-      - name: Check all containers running
-        run: docker-compose ps
+      - name: Check all containers status
+        run: docker compose ps
 
       - name: Verify Flask app health
         run: |
@@ -187,17 +195,24 @@ jobs:
             -d "name=TestItem&quantity=10&price=9.99"
           echo "Test item added!"
 
-      - name: Verify metrics updated
+      - name: Verify metrics updated after item add
         run: |
           sleep 5
           METRICS=$(curl -s http://localhost:5000/metrics)
           echo "$METRICS" | grep "inventory_total_items"
+          echo "$METRICS" | grep "inventory_item_operations_total"
           echo "Metrics updated correctly!"
 
-      - name: Show logs on failure
+      - name: Show all service logs on failure
         if: failure()
-        run: docker-compose logs
+        run: |
+          echo "=== Flask App Logs ==="
+          docker compose logs flask-app
+          echo "=== Prometheus Logs ==="
+          docker compose logs prometheus
+          echo "=== Grafana Logs ==="
+          docker compose logs grafana
 
-      - name: Cleanup
+      - name: Cleanup all services
         if: always()
-        run: docker-compose down
+        run: docker compose down --volumes
