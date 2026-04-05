@@ -139,7 +139,7 @@ jobs:
 
       - name: Start all services
         run: |
-          docker-compose up -d
+          docker-compose up -d --build
           echo "Waiting for services to start..."
           sleep 30
 
